@@ -78,22 +78,24 @@ class TermWeightScorer():
 	def _common_doc_frequency(self):
 		# vocab: Number of documents containing a term in corpus
 		self.vocab = Counter([token for token_list in self.X for token in set(token_list)])
-		nb_terms_doc = self.X.apply(lambda x: len(x))
-	
-		# avg_dl: Average number of terms in all documents
-		self.avg_dl = int(np.average(nb_terms_doc))
-
-		data = np.column_stack((self.X, self.y))
-		for lbl in np.unique(self.y):
-			subset = data[data[:,1] == lbl]
-			# class_counts: Number of documents present in class
-			# class_vocab: Number of documents containing term in class
-			self.class_counts[lbl] = subset.shape[0]
-			self.class_vocab[lbl] = Counter([token for tokens in subset[:, 0] 
-									for token in set(tokens)])
 
 		# N: Number of documents in corpus
 		self.N = len(self.X)
+
+		if self.tf_type in ['bm25']:
+			nb_terms_doc = self.X.apply(lambda x: len(x))
+			# avg_dl: Average number of terms in all documents
+			self.avg_dl = int(np.average(nb_terms_doc))
+
+		if self.idf_type in ['dsidf', 'dbidf', 'rf']:
+			data = np.column_stack((self.X, self.y))
+			for lbl in np.unique(self.y):
+				subset = data[data[:,1] == lbl]
+				# class_counts: Number of documents present in class
+				# class_vocab: Number of documents containing term in class
+				self.class_counts[lbl] = subset.shape[0]
+				self.class_vocab[lbl] = Counter([token for tokens in subset[:, 0] 
+										for token in set(tokens)])
 
 	def _term_frequency(self, token_list):
 		tf = {}
@@ -210,6 +212,8 @@ if __name__ == '__main__':
 
 	train = pd.read_csv(PATH1, encoding=encoding)
 	test = pd.read_csv(PATH2, encoding=encoding)
+	print(train.shape, test.shape)
+
 	X_train, y_train = train[text_field], train[label_field]
 	X_test, y_test = test[text_field], test[label_field]
 
