@@ -1,3 +1,24 @@
+'''
+Implementation of various term weighting techniques mentioned in these papers:
+https://arxiv.org/pdf/1610.03106v1.pdf
+http://www.aclweb.org/anthology/P10-1141
+
+Results of Sentiment Analysis on Farmers insurance dataset:
+-----------------------------------------------------------
+Accuracy with tp-unary : 0.815
+Accuracy with tf-idf : 0.817
+Accuracy with bm25-bm25 : 0.816
+Accuracy with atf-idf : 0.815
+
+2-classes
+Accuracy with tp-unary : 0.846
+Accuracy with tf-dbidf : 0.826
+Accuracy with tf-dsidf : 0.833
+Accuracy with bm25-bm25 : 0.846
+Accuracy with atf-ne : 0.849
+Accuracy with atf-wllr : 0.799
+
+'''
 from __future__ import division
 from collections import Counter, defaultdict ,OrderedDict
 from math import log
@@ -36,14 +57,15 @@ class TermWeightScorer():
 		Relevant for bm25, ignored otherwise.
 	
 		idf_type: type of document/global frequency calculation from 
-				['unary', 'idf', 'bm25', 'dsidf', 'dbidf', 'rf']
+				['unary', 'idf', 'bm25', 'dsidf', 'dbidf', 'ne', 'wllr']
 		unary - 1
 		idf - inverse document frequency
 		bm25 - BM25 inverse document frequency
 		dsidf - delta smoothed idf, for 2-class classification
 		dbidf - delta BM25 idf, for 2-class classification
-		rf - relevance frequency
-
+		ne - natural entropy
+		wllr - Weighted Log Likelihood Ratio
+		
 		smooth_factor: smoothing factor to be applied.
 		'''
 		self.tokenize = tokenize
@@ -87,7 +109,7 @@ class TermWeightScorer():
 			# avg_dl: Average number of terms in all documents
 			self.avg_dl = int(np.average(nb_terms_doc))
 
-		if self.idf_type in ['dsidf', 'dbidf', 'rf']:
+		if self.idf_type in ['dsidf', 'dbidf', 'ne', 'wllr']:
 			data = np.column_stack((self.X, self.y))
 			for lbl in np.unique(self.y):
 				subset = data[data[:,1] == lbl]
@@ -142,12 +164,37 @@ class TermWeightScorer():
 					self.idf[token] = log(numerator / denominator)
 				elif self.idf_type == 'dbidf':
 					labels = list(self.class_vocab.keys())
-					assert (len(labels) == 2), "Only two classes allowed for dsidf."
+					assert (len(labels) == 2), "Only two classes allowed for dbidf."
 					numerator = (self.class_counts[labels[0]] - self.class_vocab[labels[1]][token] + 0.5) \
 						* self.class_vocab[labels[0]][token] + 0.5
 					denominator = (self.class_counts[labels[1]] - self.class_vocab[labels[0]][token] + 0.5) \
 						* self.class_vocab[labels[1]][token] + 0.5
 					self.idf[token] = log(numerator / denominator)
+				elif self.idf_type == 'ne':
+					labels = list(self.class_vocab.keys())
+					assert (len(labels) == 2), "Only two classes allowed for ne."
+					nb_cl0_tok = self.class_vocab[labels[0]][token]
+					nb_cl1_tok = self.class_vocab[labels[1]][token]
+					nb_tok = self.vocab[token]
+					term0 = (nb_cl0_tok / nb_tok)
+					if term0 != 0:
+						term0 = term0 * log(term0)
+					term1 = (nb_cl1_tok / nb_tok)
+					if term1 != 0:
+						term1 = term1 * log(term1)
+					self.idf[token] = 1 + term0 + term1
+				elif self.idf_type == 'wllr':
+					labels = list(self.class_vocab.keys())
+					assert (len(labels) == 2), "Only two classes allowed for wllr."
+					nb_cl0_tok = self.class_vocab[labels[0]][token]
+					nb_cl1_tok = self.class_vocab[labels[1]][token]
+					nb_tok = self.vocab[token]
+					term0 = ((nb_cl0_tok / nb_tok) * self.class_counts[labels[0]]) / nb_tok
+					term1 = ((nb_cl1_tok / nb_tok) * self.class_counts[labels[1]]) / nb_tok
+					if term0 != 0 and term1 != 0:
+						self.idf[token] = term0 * log(term0 / term1)
+					else:
+						self.idf[token] = 1
 			except Exception as e:
 				raise Exception("Error while computing IDF scores", e)
 
@@ -204,20 +251,24 @@ class TermWeightScorer():
 
 
 if __name__ == '__main__':
-	PATH1 = "/home/amandadsouza/decrypt/datasets/Combined_Train.csv"
-	PATH2 = "/home/amandadsouza/decrypt/datasets/Combined_Test.csv"
-	text_field = 'fincom'
-	label_field = 'Sentiment'
-	encoding = 'cp1252'
+	PATH1 = "/home/amandadsouza/decrypt/datasets/train.csv"
+	PATH2 = "/home/amandadsouza/decrypt/datasets/test.csv"
+	text_field = 'Verbatim'
+	label_field = 'NET_Name'
+	encoding = 'utf-8' #'cp1252'
 
 	train = pd.read_csv(PATH1, encoding=encoding)
 	test = pd.read_csv(PATH2, encoding=encoding)
 	print(train.shape, test.shape)
 
+	train = train[train[label_field].isin(['Positive', 'Negative'])]
+	test = test[test[label_field].isin(['Positive', 'Negative'])]
+
 	X_train, y_train = train[text_field], train[label_field]
 	X_test, y_test = test[text_field], test[label_field]
 
-	twm = TermWeightScorer(tf_type='bm25', idf_type='bm25')
+	tf_type, idf_type = 'atf', 'wllr'
+	twm = TermWeightScorer(tf_type=tf_type, idf_type=idf_type)
 	X_train = twm.fit_transform(X_train, y_train)
 	X_test = twm.transform(X_test)
 
@@ -228,4 +279,4 @@ if __name__ == '__main__':
 	preds = clf.predict(X_test)
 
 	from sklearn.metrics import accuracy_score
-	print(accuracy_score(y_test, preds))
+	print('Accuracy with {}-{} : {}'.format(tf_type, idf_type, accuracy_score(y_test, preds)))
